@@ -143,6 +143,20 @@ extension Camera {
     }
 
     /**
+     Which video codec the HLS manifest should be encoded with.
+
+     Verkada serves HEVC by default, but AVPlayer's HLS pipeline is
+     inconsistent about playing HEVC in `.m3u8` manifests (manifests
+     itself the same way internally as `HLS-FASB` err=-15514 or
+     `FigStreamPlayer` err=-12862). Default ``h264`` keeps AVKit happy
+     across iOS / macOS / tvOS without callers having to know.
+     */
+    public enum FootageCodec: String, Sendable {
+        case h264 = "h264"
+        case hevc = "hevc"
+    }
+
+    /**
      Returns an HLS manifest URL suitable for `AVPlayer` / `VideoPlayer`.
 
      The URL embeds a short-lived JWT (30 min); cache and reuse the
@@ -153,11 +167,17 @@ extension Camera {
        - window: ``live`` (default) or a ``recorded(from:to:)`` window
          no longer than 3,600 seconds.
        - resolution: ``high`` (default) or ``low``.
+       - codec: ``h264`` (default) or ``hevc``. Default is h264 because
+         AVPlayer's HLS pipeline doesn't reliably play Verkada's HEVC
+         manifests on every macOS/iOS/tvOS version (you'll see
+         `HLS-FASB` / `FigStreamPlayer` errors). Switch to ``hevc`` only
+         if you've confirmed your playback target handles it.
      */
     @MainActor
     public func streamURL(
         for window: FootageWindow = .live,
-        resolution: FootageResolution = .high
+        resolution: FootageResolution = .high,
+        codec: FootageCodec = .h264
     ) async throws -> URL {
         guard let orgId = Verkada.orgId, !orgId.isEmpty
         else { throw ConfigError.orgIdNotSet }
@@ -169,7 +189,7 @@ extension Camera {
             .appending(path: "stream/cameras/v1/footage/stream/stream.m3u8")
 
         var components = URLComponents(url: path, resolvingAgainstBaseURL: false)!
-        components.queryItems = [
+        var items: [URLQueryItem] = [
             URLQueryItem(name: "org_id",     value: orgId),
             URLQueryItem(name: "camera_id",  value: id),
             URLQueryItem(name: "jwt",        value: jwt.value),
@@ -178,6 +198,19 @@ extension Camera {
             URLQueryItem(name: "resolution", value: resolution.rawValue),
             URLQueryItem(name: "type",       value: "stream"),
         ]
+        // `codec=h264` is honoured by Verkada *only* for `low_res`;
+        // they ignore it for `high_res` and serve HEVC anyway. The
+        // documented way to force H.264 across the board is the
+        // `transcode=true` parameter — request that whenever the caller
+        // asks for ``h264``.
+        switch codec {
+        case .h264:
+            items.append(URLQueryItem(name: "codec",     value: "h264"))
+            items.append(URLQueryItem(name: "transcode", value: "true"))
+        case .hevc:
+            items.append(URLQueryItem(name: "codec",     value: "hevc"))
+        }
+        components.queryItems = items
 
         guard let url = components.url
         else { throw PrestoError.urlConstructionFailure }
