@@ -2,45 +2,92 @@
 //  AuditLogEvent.swift
 //  VerkadaKit
 //
+//  One row from `/core/v1/audit_log` — an administrator (or API key)
+//  action recorded against the organisation. The `details` field carries
+//  per-action structured data that Verkada hasn't promised stable;
+//  exposed as `[String: Any]` for callers that want to spelunk.
+//
 
 import Foundation
 
-/**
- A row from `/core/v1/audit_log` — one administrator action recorded
- against the organisation. The event payload is intentionally loose: the
- schema differs from action to action and is decoded as ``payload``
- (`[String: AnyJSON]`) rather than a typed sum.
- */
 public struct AuditLogEvent: Decodable, Sendable {
-    public let eventId:   String?
-    public let timestamp: Date?
-    public let user:      String?
-    public let action:    String?
-    public let target:    String?
 
+    //--------------------------------------
+    // MARK: - WHEN / WHO -
+    //--------------------------------------
+    public let timestamp:          Date?
+    public let processedTimestamp: Date?
+
+    public let userId:    String?
+    public let userEmail: String?
+    public let userName:  String?
+
+    /// The org that owns this event. Helpful when an integration spans
+    /// multiple Verkada orgs — otherwise redundant.
+    public let organizationId: String?
+
+    /// Source IP of the actor. `nil` for API-key driven actions.
+    public let ipAddress: String?
+
+    //--------------------------------------
+    // MARK: - WHAT -
+    //--------------------------------------
+    /// Stable machine identifier for the event (e.g. `door_unlocked`,
+    /// `user_created`). Match on this for filtering.
+    public let eventName: String?
+
+    /// Human-readable description Verkada renders in Command.
+    public let eventDescription: String?
+
+    /// IDs of devices implicated in this event, if any.
+    public let devices: [String]?
+
+    /// Verkada's optional support reference for this event.
+    public let verkadaSupportId: String?
+
+    //--------------------------------------
+    // MARK: - DECODING -
+    //--------------------------------------
     enum CodingKeys: String, CodingKey {
-        case eventId    = "event_id"
         case timestamp
-        case user       = "user_email"
-        case action     = "event_name"
-        case target     = "target"
+        case processedTimestamp = "processed_timestamp"
+        case userId             = "user_id"
+        case userEmail          = "user_email"
+        case userName           = "user_name"
+        case organizationId     = "organization_id"
+        case ipAddress          = "ip_address"
+        case eventName          = "event_name"
+        case eventDescription   = "event_description"
+        case devices
+        case verkadaSupportId   = "verkada_support_id"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.eventId = try c.decodeIfPresent(String.self, forKey: .eventId)
-        self.user    = try c.decodeIfPresent(String.self, forKey: .user)
-        self.action  = try c.decodeIfPresent(String.self, forKey: .action)
-        self.target  = try c.decodeIfPresent(String.self, forKey: .target)
+        self.timestamp          = AuditLogEvent.decodeDate(c, .timestamp)
+        self.processedTimestamp = AuditLogEvent.decodeDate(c, .processedTimestamp)
 
-        // Verkada serialises audit timestamps as either an ISO-8601 string
-        // or epoch seconds — accept both.
-        if let iso = try? c.decodeIfPresent(String.self, forKey: .timestamp) {
-            self.timestamp = ISO8601DateFormatter().date(from: iso)
-        } else if let epoch = try? c.decodeIfPresent(TimeInterval.self, forKey: .timestamp) {
-            self.timestamp = Date(timeIntervalSince1970: epoch)
-        } else {
-            self.timestamp = nil
+        self.userId           = try c.decodeIfPresent(String.self, forKey: .userId)
+        self.userEmail        = try c.decodeIfPresent(String.self, forKey: .userEmail)
+        self.userName         = try c.decodeIfPresent(String.self, forKey: .userName)
+        self.organizationId   = try c.decodeIfPresent(String.self, forKey: .organizationId)
+        self.ipAddress        = try c.decodeIfPresent(String.self, forKey: .ipAddress)
+        self.eventName        = try c.decodeIfPresent(String.self, forKey: .eventName)
+        self.eventDescription = try c.decodeIfPresent(String.self, forKey: .eventDescription)
+        self.devices          = try c.decodeIfPresent([String].self, forKey: .devices)
+        self.verkadaSupportId = try c.decodeIfPresent(String.self, forKey: .verkadaSupportId)
+    }
+
+    /// Verkada serialises audit timestamps as either ISO-8601 strings or
+    /// epoch seconds depending on which sub-endpoint you hit — accept both.
+    private static func decodeDate(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Date? {
+        if let iso = try? c.decodeIfPresent(String.self, forKey: key),
+           let date = ISO8601DateFormatter().date(from: iso) {
+            return date
         }
+        if let epoch = try? c.decodeIfPresent(TimeInterval.self, forKey: key) {
+            return Date(timeIntervalSince1970: epoch)
+        }
+        return nil
     }
 }

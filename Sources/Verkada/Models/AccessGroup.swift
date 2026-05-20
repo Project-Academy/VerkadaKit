@@ -23,7 +23,7 @@ public struct AccessGroup: Codable, Sendable, Hashable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id   = "access_group_id"
+        case id   = "group_id"
         case name
         case userCount = "user_count"
     }

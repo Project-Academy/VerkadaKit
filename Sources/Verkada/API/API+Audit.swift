@@ -24,7 +24,7 @@ extension API {
 }
 
 internal enum AuditKey: PageEnvelopeKey {
-    static let itemsKey = "audit_log_events"
+    static let itemsKey = "audit_logs"
 }
 internal typealias AuditPage = PageEnvelope<[AuditLogEvent], AuditKey>
 
