@@ -3,16 +3,16 @@
 //  VerkadaKit
 //
 //  Verkada's request type. Wraps `DefaultRequest<Verkada>` from Tapioca
-//  in a thin struct so we can carry two pieces of request-scoped state
+//  in a thin struct so we can carry three pieces of request-scoped state
 //  the default doesn't track:
 //
 //   1. `retryPolicy` — how aggressively `postProcess` may re-fire on
 //      transient failures (429 / 5xx).
 //   2. `didRefreshTokenOnce` — set by `postProcess` after a 401 forces a
 //      token re-mint, so the retry is a one-shot rather than a loop.
-//   3. `isTokenMint` — flag on the `POST /token` request itself, telling
-//      `preProcess` to attach `x-api-key` instead of trying to use a
-//      bearer it doesn't yet have.
+//   3. `usesAPIKey` — set on requests that must authenticate with the
+//      long-lived `x-api-key` instead of the rotating bearer (currently
+//      `POST /token` and `GET /cameras/v1/footage/token`).
 //
 //  All Verkada-specific chainable modifiers live as constrained
 //  extensions further down.
@@ -52,9 +52,11 @@ public struct Request: APIRequest {
     /// follow-up retry knows not to refresh again if it *also* 401s.
     public var didRefreshTokenOnce: Bool = false
 
-    /// The `POST /token` request itself uses `x-api-key`, not a bearer.
-    /// This flag tells ``Verkada/preProcess(request:)`` to take that path.
-    public var isTokenMint: Bool = false
+    /// Set on requests that must authenticate with the long-lived
+    /// `x-api-key` rather than the rotating bearer — the token-mint call
+    /// itself and the footage-token call both have to bootstrap from the
+    /// API key. Tells ``Verkada/preProcess(request:)`` to take that path.
+    public var usesAPIKey: Bool = false
 
     //--------------------------------------
     // MARK: - INITIALISERS -
@@ -85,9 +87,12 @@ public struct Request: APIRequest {
     //--------------------------------------
     // MARK: - INTERNAL -
     //--------------------------------------
-    internal func markedAsTokenMint() -> Self {
+    /// Marks this request as one that authenticates with `x-api-key`
+    /// rather than the bearer token (token mint, footage token). Internal
+    /// to the kit.
+    internal func markedAsAPIKeyAuthed() -> Self {
         var r = self
-        r.isTokenMint = true
+        r.usesAPIKey = true
         return r
     }
 }

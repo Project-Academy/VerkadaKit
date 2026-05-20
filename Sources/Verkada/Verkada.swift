@@ -76,6 +76,17 @@ public struct Verkada: Tapioca {
      */
     public static var keysFetcher: (@Sendable () async throws -> Credentials)?
 
+    /**
+     The Verkada organisation ID. Required for any endpoint that bakes the
+     org into a URL — notably the HLS footage stream. The token-mint and
+     core REST endpoints derive the org from the API key automatically, so
+     this only needs to be set if you're using footage / streaming.
+
+     Easiest path: copy from Command's Settings → API page, or carry it
+     in your secrets store alongside the API key.
+     */
+    public static var orgId: String?
+
     //--------------------------------------
     // MARK: - LOGGING -
     //--------------------------------------
@@ -106,15 +117,30 @@ public struct Verkada: Tapioca {
     internal static var refreshTask: Task<Token, Error>?
 
     //--------------------------------------
+    // MARK: - FOOTAGE TOKEN CACHE -
+    //--------------------------------------
+    /// The cached JWT used to authenticate HLS stream / thumbnail
+    /// requests. Distinct from ``token`` because footage tokens are
+    /// returned by a different endpoint and expire on an independent
+    /// clock. ``Camera/streamURL(for:resolution:)`` and friends consult
+    /// ``currentFootageToken()`` rather than reading this directly.
+    public internal(set) static var footageToken: FootageToken?
+
+    /// Single in-flight footage-token refresh task — same coalescing
+    /// pattern as ``refreshTask``.
+    internal static var footageRefreshTask: Task<FootageToken, Error>?
+
+    //--------------------------------------
     // MARK: - PRE-PROCESS -
     //--------------------------------------
     public static func preProcess(request: Request) async throws -> Request {
 
-        // Token-mint requests are themselves unauthenticated — they
-        // only need the long-lived `x-api-key` to call POST /token.
-        // We tag those requests via `isTokenMint` so we don't try to
-        // attach a bearer to them (and recurse).
-        if request.isTokenMint {
+        // Some requests must bootstrap from the long-lived `x-api-key`
+        // rather than the rotating bearer (POST /token itself, and the
+        // footage-token call). They flag themselves via `usesAPIKey` so
+        // we don't try to attach a bearer that hasn't been minted yet
+        // (and recurse).
+        if request.usesAPIKey {
             let key = try await currentAPIKey()
             return request
                 .accepts(type: request.accepts)

@@ -25,6 +25,9 @@ public enum ConfigError: VerkadaError {
     case keysFetcherNotImplemented
     /// Thrown when the fetcher returns an empty/blank API key.
     case keysFetcherReturnedEmptyKey
+    /// Thrown when a request that requires ``Verkada/orgId`` (e.g. an HLS
+    /// stream URL) is fired without it being set.
+    case orgIdNotSet
 }
 
 //--------------------------------------

@@ -92,7 +92,7 @@ extension Verkada {
             _ = try await currentAPIKey()
 
             let resp = try await API.TokenAPI.mint.POST
-                .markedAsTokenMint()
+                .markedAsAPIKeyAuthed()
                 .retryPolicy(.retryWithLimit(maxAttempts: 1))
                 .response()
                 .asType(TokenResponse.self)
