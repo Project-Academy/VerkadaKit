@@ -39,8 +39,23 @@ public struct AuditLogEvent: Decodable, Sendable {
     /// Human-readable description Verkada renders in Command.
     public let eventDescription: String?
 
-    /// IDs of devices implicated in this event, if any.
-    public let devices: [String]?
+    /// Devices implicated in this event, if any. Verkada returns
+    /// these as nested objects (id + name + type), not bare strings.
+    public let devices: [Device]?
+
+    public struct Device: Decodable, Sendable, Hashable {
+        public let deviceId:   String?
+        public let name:       String?
+        public let deviceType: String?
+        public let productType: String?
+
+        enum CodingKeys: String, CodingKey {
+            case deviceId    = "device_id"
+            case name
+            case deviceType  = "device_type"
+            case productType = "product_type"
+        }
+    }
 
     /// Verkada's optional support reference for this event.
     public let verkadaSupportId: String?
@@ -74,7 +89,10 @@ public struct AuditLogEvent: Decodable, Sendable {
         self.ipAddress        = try c.decodeIfPresent(String.self, forKey: .ipAddress)
         self.eventName        = try c.decodeIfPresent(String.self, forKey: .eventName)
         self.eventDescription = try c.decodeIfPresent(String.self, forKey: .eventDescription)
-        self.devices          = try c.decodeIfPresent([String].self, forKey: .devices)
+        // Be lenient: if Verkada's device shape changes again, swallow
+        // the decode failure on this field alone so the rest of the
+        // row still surfaces. Better to lose `devices` than the row.
+        self.devices          = try? c.decodeIfPresent([Device].self, forKey: .devices)
         self.verkadaSupportId = try c.decodeIfPresent(String.self, forKey: .verkadaSupportId)
     }
 
