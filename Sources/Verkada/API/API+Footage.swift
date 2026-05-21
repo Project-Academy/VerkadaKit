@@ -67,8 +67,8 @@ extension Verkada {
      The cached footage JWT, refreshing it transparently if missing or
      expired. Concurrent callers coalesce onto a single round-trip.
      */
-    internal static func currentFootageToken() async throws -> FootageToken {
-        if let footageToken, footageToken.isValid { return footageToken }
+    internal static func currentFootageToken() async throws -> String {
+        if let footageToken { return footageToken } // @Expires returns nil on expiry
         return try await refreshFootageToken()
     }
 
@@ -78,10 +78,10 @@ extension Verkada {
      rotating bearer.
      */
     @discardableResult
-    internal static func refreshFootageToken() async throws -> FootageToken {
+    internal static func refreshFootageToken() async throws -> String {
         if let existing = footageRefreshTask { return try await existing.value }
 
-        let task = Task<FootageToken, Error> {
+        let task = Task<String, Error> {
             defer { footageRefreshTask = nil }
 
             // Make sure the API key itself is loaded — without it the
@@ -94,11 +94,10 @@ extension Verkada {
                 .response()
                 .asType(FootageTokenResponse.self)
 
-            let ttl = resp.expiresInSeconds ?? 1800
-            let minted = FootageToken(value: resp.jwt, ttl: ttl)
-            footageToken = minted
-            log("Footage token refreshed: \(minted)")
-            return minted
+            let ttl = Int(resp.expiresInSeconds ?? 1800)
+            storeFootageToken(resp.jwt, ttl: ttl)
+            log("Footage token refreshed (expires in \(ttl)s)")
+            return resp.jwt
         }
         footageRefreshTask = task
         return try await task.value
@@ -192,7 +191,7 @@ extension Camera {
         var items: [URLQueryItem] = [
             URLQueryItem(name: "org_id",     value: orgId),
             URLQueryItem(name: "camera_id",  value: id),
-            URLQueryItem(name: "jwt",        value: jwt.value),
+            URLQueryItem(name: "jwt",        value: jwt),
             URLQueryItem(name: "start_time", value: String(times.start)),
             URLQueryItem(name: "end_time",   value: String(times.end)),
             URLQueryItem(name: "resolution", value: resolution.rawValue),

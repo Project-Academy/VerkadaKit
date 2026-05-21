@@ -18,6 +18,7 @@
 
 import Foundation
 @_exported import Tapioca
+import Expires
 
 /**
  The VerkadaKit entry-point.
@@ -105,30 +106,51 @@ public struct Verkada: Tapioca {
     // MARK: - TOKEN CACHE -
     //--------------------------------------
     /**
-     The currently-cached short-lived bearer token, or `nil` if we've
-     never minted one (or the last one expired). Reading this is cheap;
-     ``preProcess(request:)`` consults ``currentToken()`` instead, which
-     handles the refresh-and-coalesce dance.
+     The currently-cached short-lived bearer JWT, or `nil` if we've
+     never minted one (or the last one expired). The `@Expires`
+     wrapper returns `nil` once the TTL we set with
+     `_token.update(_:expiresIn:)` has elapsed, so callers can use the
+     idiomatic `if let token` pattern as their freshness check —
+     ``preProcess(request:)`` does exactly that via ``currentToken()``.
      */
-    public internal(set) static var token: Token?
+    @Expires(in: .seconds(1800))
+    internal static var token: String? = nil
 
-    /// Single in-flight refresh task so parallel requests that all hit an
-    /// expired token only mint **one** new token between them.
-    internal static var refreshTask: Task<Token, Error>?
+    /// Single in-flight refresh task so parallel requests that all hit
+    /// an expired token only mint **one** new token between them.
+    internal static var refreshTask: Task<String, Error>?
 
     //--------------------------------------
     // MARK: - FOOTAGE TOKEN CACHE -
     //--------------------------------------
-    /// The cached JWT used to authenticate HLS stream / thumbnail
-    /// requests. Distinct from ``token`` because footage tokens are
-    /// returned by a different endpoint and expire on an independent
-    /// clock. ``Camera/streamURL(for:resolution:)`` and friends consult
-    /// ``currentFootageToken()`` rather than reading this directly.
-    public internal(set) static var footageToken: FootageToken?
+    /**
+     The cached JWT used to authenticate HLS stream / thumbnail
+     requests. Distinct from ``token`` because footage tokens are
+     returned by a different endpoint and expire on an independent
+     clock. ``Camera/streamURL(for:resolution:)`` and friends consult
+     ``currentFootageToken()`` rather than reading this directly.
+     */
+    @Expires(in: .seconds(1800))
+    internal static var footageToken: String? = nil
 
     /// Single in-flight footage-token refresh task — same coalescing
     /// pattern as ``refreshTask``.
-    internal static var footageRefreshTask: Task<FootageToken, Error>?
+    internal static var footageRefreshTask: Task<String, Error>?
+
+    //--------------------------------------
+    // MARK: - TOKEN SETTERS -
+    //--------------------------------------
+    // The `_token` / `_footageToken` Expires accessors are file-private
+    // to whichever file declared the @Expires property, so the refresh
+    // sites in API+Token.swift / API+Footage.swift can't poke them
+    // directly. These thin helpers keep the storage in this file while
+    // letting the refresh logic stay where it belongs.
+    internal static func storeToken(_ value: String, ttl seconds: Int) {
+        _token.update(value, expiresIn: .seconds(seconds))
+    }
+    internal static func storeFootageToken(_ value: String, ttl seconds: Int) {
+        _footageToken.update(value, expiresIn: .seconds(seconds))
+    }
 
     //--------------------------------------
     // MARK: - PRE-PROCESS -
@@ -153,7 +175,7 @@ public struct Verkada: Tapioca {
         return request
             .accepts(type: request.accepts)
             .content(type: request.content)
-            .setHeader(key: "x-verkada-auth", value: bearer.value)
+            .setHeader(key: "x-verkada-auth", value: bearer)
     }
 
     //--------------------------------------
@@ -248,16 +270,25 @@ public struct Verkada: Tapioca {
 //--------------------------------------
 /**
  The minimum shape that ``Verkada/keysFetcher`` must produce. Holds the
- long-lived API key and, optionally, a previously-issued token so an app
- that's already got a valid bearer in its keychain can skip the initial
- `/token` round-trip.
+ long-lived API key and, optionally, a previously-issued bearer +
+ expiry pair so an app that has a valid bearer cached in (say) its
+ keychain can skip the initial `/token` round-trip on launch.
  */
 public struct Credentials: Sendable {
     public let apiKey: String
-    public let preloadedToken: Token?
+    public let preloadedToken: PreloadedToken?
 
-    public init(apiKey: String, preloadedToken: Token? = nil) {
+    public init(apiKey: String, preloadedToken: PreloadedToken? = nil) {
         self.apiKey = apiKey
         self.preloadedToken = preloadedToken
+    }
+
+    public struct PreloadedToken: Sendable {
+        public let value: String
+        public let expiresAt: Date
+        public init(value: String, expiresAt: Date) {
+            self.value = value
+            self.expiresAt = expiresAt
+        }
     }
 }

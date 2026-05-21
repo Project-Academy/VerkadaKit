@@ -61,19 +61,21 @@ extension Verkada {
         else { throw ConfigError.keysFetcherReturnedEmptyKey }
 
         apiKey = creds.apiKey
-        if let preloaded = creds.preloadedToken, preloaded.isValid {
-            token = preloaded
+        if let preloaded = creds.preloadedToken,
+           preloaded.expiresAt > Date() {
+            let ttl = Int(preloaded.expiresAt.timeIntervalSinceNow)
+            storeToken(preloaded.value, ttl: ttl)
         }
         return creds.apiKey
     }
 
     /**
-     The cached bearer for the current organisation, refreshing it
-     transparently if it's missing or expired. Concurrent callers coalesce
+     The cached bearer JWT for the current organisation, refreshing it
+     transparently if missing or expired. Concurrent callers coalesce
      onto a single `/token` round-trip.
      */
-    internal static func currentToken() async throws -> Token {
-        if let token, token.isValid { return token }
+    internal static func currentToken() async throws -> String {
+        if let token { return token }   // `@Expires` returns nil when expired
         return try await refreshToken()
     }
 
@@ -83,10 +85,10 @@ extension Verkada {
      second round-trip.
      */
     @discardableResult
-    internal static func refreshToken() async throws -> Token {
+    internal static func refreshToken() async throws -> String {
         if let existing = refreshTask { return try await existing.value }
 
-        let task = Task<Token, Error> {
+        let task = Task<String, Error> {
             defer { refreshTask = nil }
 
             _ = try await currentAPIKey()
@@ -97,11 +99,10 @@ extension Verkada {
                 .response()
                 .asType(TokenResponse.self)
 
-            let ttl = resp.expiresInSeconds ?? 1800
-            let minted = Token(value: resp.token, ttl: ttl)
-            token = minted
-            log("Token refreshed: \(minted)")
-            return minted
+            let ttl = Int(resp.expiresInSeconds ?? 1800)
+            storeToken(resp.token, ttl: ttl)
+            log("Token refreshed (expires in \(ttl)s)")
+            return resp.token
         }
         refreshTask = task
         return try await task.value
